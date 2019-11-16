@@ -1,0 +1,24 @@
+[package]
+name = "serv"
+version = "0.1.0"
+authors = ["Cedric Hutchings <cedhut02@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# us
+comn = { path = "../comn" }
+
+# networking
+tungstenite = "0.9.1"
+crossbeam-channel = "0.3.8"
+
+# util
+pretty_env_logger = "0.3.1"
+log = "0.4.8"
+
+# ecs
+specs-derive = "0.4.0"
+fixedstep = "0.3.0"
+rand = "0.7.2"

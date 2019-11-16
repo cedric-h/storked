@@ -1,0 +1,9 @@
+[workspace]
+members = [
+	"comn",
+	"serv",
+	"clnt"
+]
+
+[patch.crates-io]
+shred = { git = "https://github.com/mystal/shred", branch = "fix_no_parallel" }
