@@ -12,7 +12,7 @@ use prelude::*;
 
 mod renderer {
     use crate::prelude::*;
-    use comn::art::{Animate, AnimationData, Appearance, Tile};
+    use comn::art::{Animate, AnimationData, Appearance, SpritesheetData, Tile};
     use comn::enum_iterator::IntoEnumIterator;
     use std::collections::HashMap;
     use stdweb::{
@@ -27,7 +27,6 @@ mod renderer {
     pub struct Render {
         ctx: CanvasContext,
         imgs: HashMap<Appearance, ImageElement>,
-        animation_data: HashMap<Appearance, AnimationData>,
     }
 
     impl Default for Render {
@@ -59,7 +58,6 @@ mod renderer {
                 ctx: CanvasContext::from_canvas(&canvas)
                     .expect("Couldn't get canvas rendering context from canvas"),
                 imgs,
-                animation_data: Appearance::animation_data(),
             }
         }
     }
@@ -69,10 +67,10 @@ mod renderer {
             ReadStorage<'a, Appearance>,
             ReadStorage<'a, Pos>,
             ReadStorage<'a, Tile>,
-            ReadStorage<'a, Animate>,
+            WriteStorage<'a, Animate>,
         );
 
-        fn run(&mut self, (appearances, poses, tiles, animates): Self::SystemData) {
+        fn run(&mut self, (appearances, poses, tiles, mut animates): Self::SystemData) {
             self.ctx.set_fill_style_color("black");
 
             // black background
@@ -103,28 +101,56 @@ mod renderer {
             // their center on the X,
             // but their bottom on the Y.
             for (appearance, &Pos(iso), animaybe, _) in
-                (&appearances, &poses, animates.maybe(), !&tiles).join()
+                (&appearances, &poses, (&mut animates).maybe(), !&tiles).join()
             {
                 const SIZE: f32 = 2.0;
-                //if let Some(animate) = animaybe {
-                //} else {
-                self.ctx
-                    .draw_image_d(
-                        self.imgs[appearance].clone(),
-                        ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
-                        ((iso.translation.vector.y - SIZE) * 20.0) as f64,
-                        (SIZE * 20.0) as f64,
-                        (SIZE * 20.0) as f64,
-                    )
-                    .expect("Couldn't draw non-tile entity!");
-                // }
+                if let Some(anim) = animaybe {
+                    let SpritesheetData {
+                        rows,
+                        frame_width,
+                        frame_height,
+                    } = comn::art::SPRITESHEETS
+                        .get(appearance)
+                        .unwrap_or_else(|| panic!("No animation data found for {:?}!", appearance));
+
+                    let AnimationData { frame_duration, .. } = rows
+                        .get(anim.row)
+                        .unwrap_or_else(|| panic!("{:?} has no row #{}!", appearance, anim.row));
+
+                    let current_frame =
+                        (anim.current_frame - anim.current_frame % frame_duration) / frame_duration;
+
+                    self.ctx
+                        .draw_image_s(
+                            self.imgs[appearance].clone(),
+                            (frame_width * current_frame) as f64,
+                            (frame_height * anim.row) as f64,
+                            *frame_width as f64,
+                            *frame_height as f64,
+                            ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
+                            ((iso.translation.vector.y - SIZE) * 20.0) as f64,
+                            (SIZE * 20.0) as f64,
+                            (SIZE * 20.0) as f64,
+                        )
+                        .expect("Couldn't draw animated non-tile entity!");
+                } else {
+                    self.ctx
+                        .draw_image_d(
+                            self.imgs[appearance].clone(),
+                            ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
+                            ((iso.translation.vector.y - SIZE) * 20.0) as f64,
+                            (SIZE * 20.0) as f64,
+                            (SIZE * 20.0) as f64,
+                        )
+                        .expect("Couldn't draw non-tile entity!");
+                }
             }
         }
     }
 }
 
 mod net {
-    use comn::{na, rmps, NetComponent, NetMessage, Pos};
+    use comn::{rmps, Iso2, NetComponent, NetMessage, Pos};
     use specs::prelude::*;
     use std::{
         collections::HashMap,
@@ -139,6 +165,9 @@ mod net {
         },
         Value,
     };
+
+    #[derive(Default)]
+    pub struct Player(pub Option<Entity>);
 
     pub struct ServerConnection {
         ws: WebSocket,
@@ -244,23 +273,31 @@ mod net {
         // more apt to just rely on the physics simulation on the client than on the last position
         // the server sent; that way things in the simulation will still move.
         fn run(&mut self, (mut currents, updates): Self::SystemData) {
-            for (Pos(current), UpdatePosition { iso: update, .. }) in
-                (&mut currents, &updates).join()
+            for (
+                Pos(Iso2 {
+                    translation: at, ..
+                }),
+                UpdatePosition {
+                    iso: Iso2 {
+                        translation: go, ..
+                    },
+                    ..
+                },
+            ) in (&mut currents, &updates).join()
             {
-                // this is very lazy and bad, at some point try to keep track of the server clock
-                // and then use that to ignore old irrelevant server positions when the 'net cuts
-                // out/slows down and let the client physics sim take over then.
-                // The challenging part then is just figuring out how to keep clocks synced and
-                // figuring out how to factor in ping.
-                current.translation.vector = current
-                    .translation
-                    .vector
-                    .lerp(&update.translation.vector, 0.08);
+                /*
+                const LERP_DIST: f32 = 0.03;
+                let to_go = go.vector - at.vector;
 
+                if to_go.magnitude().abs() > 2.0 * LERP_DIST {
+                    at.vector += to_go.normalize() * LERP_DIST;
+                } */
+                at.vector = at.vector.lerp(&go.vector, 0.08);
+                /*
                 current.rotation = na::UnitComplex::from_complex(
                     current.rotation.complex()
                         + current.rotation.rotation_to(&update.rotation).complex() * 0.06,
-                );
+                );*/
             }
         }
     }
@@ -275,9 +312,10 @@ mod net {
             Entities<'a>,
             Read<'a, LazyUpdate>,
             Read<'a, ServerConnection>,
+            Write<'a, Player>,
         );
 
-        fn run(&mut self, (ents, lu, sc): Self::SystemData) {
+        fn run(&mut self, (ents, lu, sc, mut player): Self::SystemData) {
             if let Ok(mut msgs) = sc.message_queue.try_lock() {
                 for msg in msgs.drain(0..) {
                     // you know the connection is established when
@@ -310,7 +348,14 @@ mod net {
                                 });
 
                             if let Some(ent) = ent {
-                                net_comp.insert(ent, &lu);
+                                match net_comp {
+                                    // I should really have some sort of
+                                    // Establishment packet that deals with this.
+                                    NetComponent::LocalPlayer(_) => {
+                                        player.0 = Some(ent);
+                                    }
+                                    _ => net_comp.insert(ent, &lu),
+                                }
                             } else {
                                 console!(
                                     error,
@@ -379,11 +424,15 @@ mod controls {
         }
     }
     impl<'a> System<'a> for MovementControl {
-        type SystemData = Read<'a, ServerConnection>;
+        type SystemData = (
+            Read<'a, ServerConnection>,
+            Read<'a, crate::net::Player>,
+            WriteStorage<'a, Heading>,
+        );
 
-        fn run(&mut self, sc: Self::SystemData) {
-            // if keys isn't being used by the listener,
-            if let Ok(keys) = self.keys.try_lock() {
+        fn run(&mut self, (sc, player, mut headings): Self::SystemData) {
+            // if keys isn't being used by the listener, and the player character has been added.
+            if let (Ok(keys), Some(player)) = (self.keys.try_lock(), player.0) {
                 // these variables are needed to determine direction from key names.
                 if keys.len() > 0 {
                     let move_vec = keys.iter().fold(na::zero(), |vec: Vec2, key| match key {
@@ -396,11 +445,15 @@ mod controls {
 
                     if move_vec != self.current_heading {
                         self.current_heading = move_vec;
+                        let heading = Heading {
+                            dir: na::Unit::new_normalize(move_vec),
+                        };
 
                         // now that we know, tell the server where we'd like to go
-                        sc.insert_comp(Heading {
-                            dir: na::Unit::new_normalize(move_vec),
-                        });
+                        sc.insert_comp(heading.clone());
+
+                        // and record that locally for clientside prediction
+                        headings.insert(player, heading.clone()).unwrap();
                     }
                 }
             }
@@ -415,11 +468,16 @@ fn main() {
     // instantiate an ECS world to hold all of the systems, resources, and components.
     let mut world = World::new();
 
+    world.insert(comn::Fps(70.0));
+
     // add systems and instantiate and order the other systems.
     #[rustfmt::skip]
     let mut dispatcher = DispatcherBuilder::new()
+        .with(comn::controls::MoveHeadings,         "heading",      &[])
+        .with(comn::phys::Collision,                "collision",    &[])
         .with(controls::MovementControl::default(), "move",         &[])
         .with(renderer::Render::default(),          "render",       &[])
+        .with(comn::art::UpdateAnimations,          "animate",      &[])
         .with(net::HandleServerPackets::default(),  "packets",      &[])
         .with(net::SyncPositions,                   "sync phys",    &[])
         .build();

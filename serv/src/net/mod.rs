@@ -3,6 +3,8 @@ mod login;
 mod packets;
 mod phys;
 
+pub use connection_manager::ConnectionManager;
+
 // main.rs needs to put these Systems in the graph
 pub use login::SendWorldToNewPlayers;
 pub use login::SpawnNewPlayers;
@@ -19,9 +21,9 @@ pub struct LoggingIn;
 
 #[derive(Component, Clone, Debug)]
 #[storage(DenseVecStorage)]
-pub struct Client(std::net::SocketAddr);
+pub struct Client(pub std::net::SocketAddr);
 
 // the submodules can use this to gain access to structs they all need.
 pub mod prelude {
-    pub use super::{connection_manager::ConnectionManager, Client, LoggingIn};
+    pub use super::{Client, ConnectionManager, LoggingIn};
 }

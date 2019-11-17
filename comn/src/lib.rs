@@ -1,5 +1,8 @@
+#![feature(stmt_expr_attributes)]
+
 pub use enum_iterator;
 pub use nalgebra as na;
+pub use ncollide2d as collide;
 pub use rmp_serde as rmps;
 pub use serde;
 pub use specs;
@@ -15,9 +18,31 @@ use specs::{prelude::*, Component};
 
 pub type Vec2 = na::Vector2<f32>;
 pub type Iso2 = na::Isometry2<f32>;
+pub use collide::shape::Cuboid;
 
 #[derive(Clone, Debug, Component, Serialize, Deserialize)]
 pub struct Pos(pub Iso2);
+
+impl Pos {
+    pub fn vec(vec: Vec2) -> Self {
+        Pos(Iso2::new(vec, na::zero()))
+    }
+}
+
+#[derive(Clone, Debug, Component, Serialize, Deserialize)]
+pub struct Hitbox(pub Cuboid<f32>);
+
+#[derive(Default)]
+pub struct Fps(pub f32);
+
+pub mod art;
+
+pub mod dead;
+pub use dead::Dead;
+
+pub mod controls;
+
+pub mod phys;
 
 pub mod net {
     pub use comp::NetComponent;
@@ -45,6 +70,11 @@ pub mod net {
     /// Essentially, when they want to enter the game world.
     /// Menu/Spectator -> Game
     pub struct SpawnPlayer;
+
+    #[derive(Clone, Debug, Component, Serialize, Deserialize)]
+    /// The server attaches this to an entity on the clients to
+    /// tell clients which entity they are able to control.
+    pub struct LocalPlayer;
 
     mod msg {
         use super::NetComponent;
@@ -101,133 +131,26 @@ pub mod net {
         }
 
         // Component includes
-        use super::{SpawnPlayer, UpdatePosition};
-        use crate::art::{Animate, Appearance, Tile};
+        use super::{LocalPlayer, SpawnPlayer, UpdatePosition};
+        use crate::art::{Animate, Appearance, PlayerAnimationController, Tile};
         use crate::controls::{Camera, Heading};
         use crate::dead::Dead;
+        use crate::Hitbox;
 
         net_component! {
             Appearance,
             Tile,
             Animate,
+            PlayerAnimationController,
             Pos,
+            Hitbox,
             Dead,
             UpdatePosition,
             SpawnPlayer,
+            LocalPlayer,
             Heading,
             Camera,
         }
     }
 }
 pub use net::{NetComponent, NetMessage};
-
-pub mod art {
-    use enum_iterator::IntoEnumIterator;
-    use serde::{Deserialize, Serialize};
-    use specs::{prelude::*, Component};
-
-    #[derive(Clone, Debug, Default, Component, Serialize, Deserialize)]
-    /// Entities with this component are rendered at a special stage on the client,
-    /// and their origin is in the (center, center) rather than their (center, bottom)
-    #[storage(NullStorage)]
-    pub struct Tile;
-
-    #[derive(Clone, Debug, Default, Component, Serialize, Deserialize)]
-    /// Entities with this component are rendered at a special stage on the client,
-    /// and their origin is in the (center, center) rather than their (center, bottom)
-    pub struct Animate {
-        current_frame: usize,
-    }
-
-    impl Animate {
-        pub fn new() -> Self {
-            Self { current_frame: 0 }
-        }
-    }
-
-    #[derive(Clone)]
-    pub struct AnimationData {
-        total_frames: usize,
-        /// How long to spend on one frame.
-        frame_duration: usize,
-        frame_width: usize,
-        frame_height: usize,
-    }
-
-    #[derive(
-        PartialEq, Eq, Hash, Clone, Debug, IntoEnumIterator, Component, Serialize, Deserialize,
-    )]
-    /// Behavior can affect how something is rendered on the client, but
-    /// the appearance should never affect the behavior.
-    /// Therefore, this component isn't really used on the server all that much
-    /// except for when it needs to be sent down to the clients.
-    pub enum Appearance {
-        Rock,
-        SpottedRock,
-        RockHole,
-        GleamyStalagmite,
-    }
-    impl Appearance {
-        pub fn animation_data() -> std::collections::HashMap<Appearance, AnimationData> {
-            [(
-                Appearance::GleamyStalagmite,
-                AnimationData {
-                    total_frames: 4,
-                    frame_duration: 5,
-                    frame_width: 32,
-                    frame_height: 32,
-                },
-            )]
-            .iter()
-            .cloned()
-            .collect()
-        }
-    }
-}
-
-pub mod dead {
-    use serde::{Deserialize, Serialize};
-    use specs::{prelude::*, Component};
-
-    #[derive(Clone, Default, Debug, Component, Serialize, Deserialize)]
-    #[storage(NullStorage)]
-    /// Marking an entity with this component means that it will be cleared away
-    /// before the next update. A component which performs this function is more
-    /// convenient than the simple Entities.delete() method because it allows
-    /// neat cleanup to be done before the final removal of the entity.
-    pub struct Dead;
-
-    /// This system clears away the entities that have died and are no longer needed.
-    pub struct ClearDead;
-    impl<'a> System<'a> for ClearDead {
-        type SystemData = (Entities<'a>, WriteStorage<'a, Dead>);
-
-        fn run(&mut self, (ents, mut dead): Self::SystemData) {
-            for (ent, _) in (&*ents, dead.drain()).join() {
-                ents.delete(ent)
-                    .expect("Couldn't kill entity with Dead component");
-            }
-        }
-    }
-}
-pub use dead::Dead;
-
-pub mod controls {
-    use super::{na, Vec2};
-    use serde::{Deserialize, Serialize};
-    use specs::{prelude::*, Component};
-
-    #[derive(Clone, Debug, Component, Serialize, Deserialize)]
-    /// Nobody gets these on the Server, but the Server
-    /// will tell the Client to put one on the entity the Client
-    /// is looking out of at the moment.
-    /// NOTE: This isn't used atm.
-    pub struct Camera;
-
-    #[derive(Clone, Debug, Component, Serialize, Deserialize)]
-    /// Where would the Client like to go?
-    /// Note that the server isn't necessarily going to actually get them there.
-    pub struct Heading {
-        pub dir: na::Unit<Vec2>,
-    }
-}

@@ -1,32 +1,23 @@
-/*
-use crate::net::prelude::*;
-use comn::{
+use crate::{
     art::{player_anim::PlayerAnimation, Animate, PlayerAnimationController},
     controls::Heading,
     prelude::*,
-    specs,
+    Fps,
 };
-use log::*;
 use specs::prelude::*;
 
 pub struct MoveHeadings;
 impl<'a> System<'a> for MoveHeadings {
     type SystemData = (
-        Entities<'a>,
-        Read<'a, ConnectionManager>,
-        ReadStorage<'a, Client>,
+        Read<'a, Fps>,
         WriteStorage<'a, Pos>,
         WriteStorage<'a, Heading>,
         WriteStorage<'a, Animate>,
         ReadStorage<'a, PlayerAnimationController>,
     );
 
-    fn run(
-        &mut self,
-        (ents, cm, clients, mut isos, mut heads, mut animates, anim_controls): Self::SystemData,
-    ) {
-        for (ent, iso, &mut Heading { mut dir }, player_anim_control, animaybe) in (
-            &*ents,
+    fn run(&mut self, (fps, mut isos, mut heads, mut animates, anim_controls): Self::SystemData) {
+        for (iso, &mut Heading { mut dir }, player_anim_control, animaybe) in (
             &mut isos,
             &mut heads,
             anim_controls.maybe(),
@@ -36,10 +27,13 @@ impl<'a> System<'a> for MoveHeadings {
         {
             if dir.magnitude() > 0.0 {
                 dir.renormalize();
-                iso.0.translation.vector += dir.into_inner() * 0.7;
+
+                // 20 fps = 3, 60 fps = 1
+                let update_granularity = 1.0 / fps.0 * 60.0;
+                iso.0.translation.vector += dir.into_inner() * 0.135 * update_granularity;
 
                 if let (true, Some(anim)) = (player_anim_control.is_some(), animaybe) {
-                    use comn::art::player_anim::Direction::*;
+                    use crate::art::player_anim::Direction::*;
 
                     let direction = if dir.x > 0.0 {
                         Right
@@ -51,13 +45,13 @@ impl<'a> System<'a> for MoveHeadings {
                         Up
                     };
 
-                    let row = PlayerAnimation::Walk(direction).into();
-                    anim.row = row;
-                    for Client(addr) in (&clients).join() {
-                        cm.insert_comp(*addr, ent, anim.clone());
-                    }
+                    anim.row = PlayerAnimation::Walk(direction).into();
+                }
+            } else {
+                if let (true, Some(anim)) = (player_anim_control.is_some(), animaybe) {
+                    anim.current_frame = 0;
                 }
             }
         }
     }
-}*/
+}
