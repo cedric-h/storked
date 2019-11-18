@@ -86,6 +86,7 @@ pub struct SpritesheetData {
 /// except for when it needs to be sent down to the clients.
 pub enum Appearance {
     Rock,
+    Key,
     SpottedRock,
     RockHole,
     GleamyStalagmite,

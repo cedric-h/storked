@@ -1,8 +1,9 @@
 // our code
 use super::prelude::*;
-use log::*;
+use comn::prelude::*;
+use comn::specs::prelude::*;
 // crates
-use comn::{na, specs::prelude::*, Pos};
+use log::*;
 
 /// This system sends the world to all clients with the LoggingIn component.
 pub struct SendWorldToNewPlayers;
@@ -18,24 +19,26 @@ impl<'a> System<'a> for SendWorldToNewPlayers {
         ReadStorage<'a, comn::art::Appearance>,
         ReadStorage<'a, comn::art::Tile>,
         ReadStorage<'a, comn::art::Animate>,
+        ReadStorage<'a, Item>,
         ReadStorage<'a, Pos>,
     );
 
     fn run(
         &mut self,
-        (cm, mut logging_ins, clients, ents, hitboxes, appearances, tiles, animates, isos): Self::SystemData,
+        (cm, mut logging_ins, clients, ents, hitboxes, appearances, tiles, animates, items, isos): Self::SystemData,
     ) {
         for (_, Client(addr)) in (logging_ins.drain(), &clients).join() {
             debug!("We're about to tell a new player about the world.");
             // tell them about each new entity they need to add, and about
             // some crucial components it has.
-            for (iso, hitbox, appearance, tile, animate, ent) in (
+            for (iso, ent, hitbox, appearance, tile, animate, item) in (
                 &isos,
+                &*ents,
                 hitboxes.maybe(),
                 appearances.maybe(),
                 tiles.maybe(),
                 animates.maybe(),
-                &*ents,
+                items.maybe(),
             )
                 .join()
             {
@@ -50,6 +53,9 @@ impl<'a> System<'a> for SendWorldToNewPlayers {
                 }
                 if let Some(appearance) = appearance {
                     cm.insert_comp(*addr, ent, appearance.clone());
+                }
+                if let Some(item) = item {
+                    cm.insert_comp(*addr, ent, item.clone());
                 }
                 if let Some(animate) = animate {
                     cm.insert_comp(*addr, ent, animate.clone());
@@ -75,14 +81,14 @@ impl<'a> System<'a> for SpawnNewPlayers {
     fn run(&mut self, (ents, cm, lu, mut players_to_spawn, clients): Self::SystemData) {
         use comn::{
             art::{self, Animate, Appearance},
-            net, Cuboid, Hitbox, Iso2, Vec2,
+            item, net, Cuboid, Hitbox,
         };
         for (_, ent, Client(new_player_addr)) in (players_to_spawn.drain(), &*ents, &clients).join()
         {
             trace!("spawning new player!");
             // these are the components the entity will have.
             let appearance = Appearance::Player;
-            let iso = Pos(Iso2::new(Vec2::new(1.0, 1.0), na::zero()));
+            let iso = Pos(Iso2::translation(1.0, 1.0));
             let animate = Animate::new();
             let hitbox = Hitbox(Cuboid::new(Vec2::new(0.5, 0.25)));
 
@@ -92,6 +98,7 @@ impl<'a> System<'a> for SpawnNewPlayers {
             lu.insert(ent, animate.clone());
             lu.insert(ent, hitbox.clone());
             lu.insert(ent, art::PlayerAnimationController);
+            lu.insert(ent, item::Inventory::default());
 
             // tell everyone 'bout the new kid on the block
             for Client(addr) in (&clients).join() {

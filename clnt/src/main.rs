@@ -4,8 +4,10 @@ extern crate stdweb;
 use stdweb::web::window;
 
 pub mod prelude {
+    pub use super::net::Player;
     pub use comn::prelude::*;
     pub use comn::rmps;
+    pub use log::*;
     pub use specs::{prelude::*, Component};
 }
 use prelude::*;
@@ -24,6 +26,10 @@ mod renderer {
         },
     };
 
+    pub const ZOOM: f32 = 20.0;
+    pub const CANVAS_ZOOM: f32 = 2.0; //change this in renderer.js
+    pub const TOTAL_ZOOM: f32 = ZOOM * CANVAS_ZOOM;
+
     pub struct Render {
         ctx: CanvasContext,
         imgs: HashMap<Appearance, ImageElement>,
@@ -38,6 +44,11 @@ mod renderer {
                 .try_into()
                 .expect("Entity with the 'canv' id isn't a canvas!");
 
+            let ctx = CanvasContext::from_canvas(&canvas)
+                .expect("Couldn't get canvas rendering context from canvas");
+
+            ctx.scale(CANVAS_ZOOM as f64, CANVAS_ZOOM as f64);
+
             // load up the images
             let imgs = Appearance::into_enum_iter()
                 .map(|appearance| {
@@ -48,17 +59,13 @@ mod renderer {
                     new_img.set_src(&loc);
 
                     // log on image load
-                    js!(@{new_img.clone()}.onload = () => console.log(@{loc}));
+                    js!(@{new_img.clone()}.onload = () => console.log("loaded: ", @{loc}));
 
                     (appearance, new_img)
                 })
                 .collect();
 
-            Self {
-                ctx: CanvasContext::from_canvas(&canvas)
-                    .expect("Couldn't get canvas rendering context from canvas"),
-                imgs,
-            }
+            Self { ctx, imgs }
         }
     }
 
@@ -89,10 +96,10 @@ mod renderer {
                 self.ctx
                     .draw_image_d(
                         self.imgs[appearance].clone(),
-                        ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
-                        ((iso.translation.vector.y - SIZE / 2.0) * 20.0) as f64,
-                        (SIZE * 20.0) as f64,
-                        (SIZE * 20.0) as f64,
+                        ((iso.translation.vector.x - SIZE / 2.0) * ZOOM) as f64,
+                        ((iso.translation.vector.y - SIZE / 2.0) * ZOOM) as f64,
+                        (SIZE * ZOOM) as f64,
+                        (SIZE * ZOOM) as f64,
                     )
                     .expect("Couldn't draw tile!");
             }
@@ -127,20 +134,20 @@ mod renderer {
                             (frame_height * anim.row) as f64,
                             *frame_width as f64,
                             *frame_height as f64,
-                            ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
-                            ((iso.translation.vector.y - SIZE) * 20.0) as f64,
-                            (SIZE * 20.0) as f64,
-                            (SIZE * 20.0) as f64,
+                            ((iso.translation.vector.x - SIZE / 2.0) * ZOOM) as f64,
+                            ((iso.translation.vector.y - SIZE) * ZOOM) as f64,
+                            (SIZE * ZOOM) as f64,
+                            (SIZE * ZOOM) as f64,
                         )
                         .expect("Couldn't draw animated non-tile entity!");
                 } else {
                     self.ctx
                         .draw_image_d(
                             self.imgs[appearance].clone(),
-                            ((iso.translation.vector.x - SIZE / 2.0) * 20.0) as f64,
-                            ((iso.translation.vector.y - SIZE) * 20.0) as f64,
-                            (SIZE * 20.0) as f64,
-                            (SIZE * 20.0) as f64,
+                            ((iso.translation.vector.x - SIZE / 2.0) * ZOOM) as f64,
+                            ((iso.translation.vector.y - SIZE) * ZOOM) as f64,
+                            (SIZE * ZOOM) as f64,
+                            (SIZE * ZOOM) as f64,
                         )
                         .expect("Couldn't draw non-tile entity!");
                 }
@@ -150,14 +157,11 @@ mod renderer {
 }
 
 mod net {
-    use comn::{rmps, Iso2, NetComponent, NetMessage, Pos};
-    use specs::prelude::*;
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-    };
+    use crate::prelude::*;
+    use bimap::BiMap;
+    use comn::{NetComponent, NetMessage, Pos};
+    use std::sync::{Arc, Mutex};
     use stdweb::{
-        console,
         unstable::TryInto,
         web::{
             event::{SocketCloseEvent, SocketErrorEvent, SocketMessageEvent, SocketOpenEvent},
@@ -214,17 +218,15 @@ mod net {
             let message_queue = Arc::new(Mutex::new(Vec::new()));
 
             ws.add_event_listener(|_: SocketOpenEvent| {
-                console!(log, "Connected to server!");
+                info!("Connected to server!");
             });
 
             ws.add_event_listener(|e: SocketErrorEvent| {
-                js! {
-                    console.error("Errror connecting to %s", @{e}.target.url);
-                };
+                error!("Errror connecting to {:?}s", e);
             });
 
             ws.add_event_listener(|e: SocketCloseEvent| {
-                console!(error, "Server Connection Closed: %s", e.reason());
+                error!("Server Connection Closed: {}s", e.reason());
             });
 
             ws.add_event_listener({
@@ -292,7 +294,7 @@ mod net {
                 if to_go.magnitude().abs() > 2.0 * LERP_DIST {
                     at.vector += to_go.normalize() * LERP_DIST;
                 } */
-                at.vector = at.vector.lerp(&go.vector, 0.08);
+                at.vector = at.vector.lerp(&go.vector, 0.03);
                 /*
                 current.rotation = na::UnitComplex::from_complex(
                     current.rotation.complex()
@@ -303,19 +305,22 @@ mod net {
     }
 
     #[derive(Default)]
+    pub struct ServerToLocalIds(pub BiMap<u32, u32>);
+
+    #[derive(Default)]
     pub struct HandleServerPackets {
-        pub server_to_local_ids: HashMap<u32, u32>,
         pub connection_established: bool,
     }
     impl<'a> System<'a> for HandleServerPackets {
         type SystemData = (
             Entities<'a>,
+            Write<'a, ServerToLocalIds>,
+            Write<'a, Player>,
             Read<'a, LazyUpdate>,
             Read<'a, ServerConnection>,
-            Write<'a, Player>,
         );
 
-        fn run(&mut self, (ents, lu, sc, mut player): Self::SystemData) {
+        fn run(&mut self, (ents, mut server_to_local_ids, mut player, lu, sc): Self::SystemData) {
             if let Ok(mut msgs) = sc.message_queue.try_lock() {
                 for msg in msgs.drain(0..) {
                     // you know the connection is established when
@@ -333,16 +338,16 @@ mod net {
                     match msg {
                         NewEnt(server) => {
                             let local: u32 = ents.create().id();
-                            self.server_to_local_ids.insert(server, local);
+                            server_to_local_ids.0.insert(server, local);
                         }
                         InsertComp(id, net_comp) => {
-                            let ent = self
-                                .server_to_local_ids
-                                .get(&id)
+                            let ent = server_to_local_ids
+                                .0
+                                .get_by_left(&id)
                                 .map(|ent| ents.entity(*ent))
                                 .filter(|ent| {
                                     if !ents.is_alive(*ent) {
-                                        console!(log, "filtering out dead ent");
+                                        info!("filtering out dead ent");
                                     }
                                     ents.is_alive(*ent)
                                 });
@@ -357,11 +362,9 @@ mod net {
                                     _ => net_comp.insert(ent, &lu),
                                 }
                             } else {
-                                console!(
-                                    error,
-                                    "Can't insert component for dead entity",
-                                    id,
-                                    format!("{:?}", net_comp)
+                                error!(
+                                    "Can't insert component for dead entity, component: {:?}",
+                                    net_comp
                                 );
                             }
                         }
@@ -384,7 +387,7 @@ mod controls {
         traits::IKeyboardEvent,
         web::{
             document,
-            event::{ConcreteEvent, KeyPressEvent, KeyUpEvent},
+            event::{ConcreteEvent, DoubleClickEvent, KeyPressEvent, KeyUpEvent},
             IEventTarget,
         },
     };
@@ -417,7 +420,7 @@ mod controls {
             Self::handle_key_event::<KeyPressEvent>(keys.clone(), true);
             Self::handle_key_event::<KeyUpEvent>(keys.clone(), false);
 
-            MovementControl {
+            Self {
                 keys,
                 current_heading: na::zero(),
             }
@@ -426,7 +429,7 @@ mod controls {
     impl<'a> System<'a> for MovementControl {
         type SystemData = (
             Read<'a, ServerConnection>,
-            Read<'a, crate::net::Player>,
+            Read<'a, Player>,
             WriteStorage<'a, Heading>,
         );
 
@@ -453,7 +456,126 @@ mod controls {
                         sc.insert_comp(heading.clone());
 
                         // and record that locally for clientside prediction
-                        headings.insert(player, heading.clone()).unwrap();
+                        headings.insert(player, heading.clone()).expect(
+                            "couldn't insert heading to player for clientside movement prediction",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub struct MouseControl {
+        mouse_events: Arc<Mutex<Vec<Vec2>>>,
+    }
+    impl Default for MouseControl {
+        fn default() -> Self {
+            let mouse_events = Arc::new(Mutex::new(Vec::new()));
+
+            document().add_event_listener({
+                use crate::stdweb::traits::IMouseEvent;
+                let mouse_events = mouse_events.clone();
+
+                move |e: DoubleClickEvent| {
+                    trace!("click!");
+                    mouse_events
+                        .lock()
+                        .expect("Can't lock mouse_events to insert event")
+                        .push(Vec2::new(e.client_x() as f32, e.client_y() as f32));
+                }
+            });
+
+            Self { mouse_events }
+        }
+    }
+    impl<'a> System<'a> for MouseControl {
+        type SystemData = (
+            Entities<'a>,
+            Read<'a, ServerConnection>,
+            Read<'a, crate::net::ServerToLocalIds>,
+            Read<'a, Player>,
+            ReadStorage<'a, Item>,
+            ReadStorage<'a, Pos>,
+        );
+
+        fn run(&mut self, (ents, sc, server_to_local_ids, player, items, poses): Self::SystemData) {
+            use comn::item::{PickupRequest, MAX_INTERACTION_DISTANCE_SQUARED};
+            const MAX_ITEM_TO_MOUSE_DISTANCE_SQUARED: f32 = {
+                let f = 2.0;
+                f * f
+            };
+
+            if let (Ok(mut mouse_events), Some(player_entity)) =
+                (self.mouse_events.lock(), player.0)
+            {
+                let Pos(Iso2 {
+                    translation: player_translation,
+                    ..
+                }) = match poses.get(player_entity) {
+                    Some(p) => p,
+                    // we have a player, but it doesn't have a location yet?
+                    // well that's fine, but clicking anything just isn't gonna work.
+                    _ => {
+                        trace!("can't look for click; player no pos");
+                        return;
+                    }
+                };
+
+                for screen_click in mouse_events.drain(..) {
+                    trace!("mouse event!");
+                    let click = screen_click / crate::renderer::TOTAL_ZOOM;
+                    if let Some(&id) = (&*ents, &poses, &items)
+                        .join()
+                        // returns (the entity of that item, that item's distance from the mouse)
+                        .filter_map(
+                            |(
+                                item_entity,
+                                Pos(Iso2 {
+                                    translation: item_translation,
+                                    ..
+                                }),
+                                _,
+                            )| {
+                                trace!("click detected: {}", click);
+                                // first see if the item is close enough to the mouse
+                                let item_to_click_distance_squared =
+                                    (item_translation.vector - click).magnitude_squared();
+
+                                if item_to_click_distance_squared
+                                    < MAX_ITEM_TO_MOUSE_DISTANCE_SQUARED
+                                    && ({
+                                        trace!("mouse click was close enough to item...");
+                                        // if that's true, make sure it's also close enough to the player.
+                                        let item_to_player_distance_squared =
+                                            (player_translation.vector - item_translation.vector)
+                                                .magnitude_squared();
+
+                                        item_to_player_distance_squared
+                                            < MAX_INTERACTION_DISTANCE_SQUARED
+                                    })
+                                {
+                                    trace!("click close enough to item and player!");
+                                    Some((item_entity, item_to_click_distance_squared))
+                                } else {
+                                    trace!(
+                                        "click too far away: {}\nitem: {}\ndistance: {}",
+                                        click,
+                                        item_translation.vector,
+                                        item_to_click_distance_squared.sqrt()
+                                    );
+                                    None
+                                }
+                            },
+                        )
+                        // finds the item with the shortest distance from the click
+                        .min_by(|(_, dist_a), (_, dist_b)| dist_a.partial_cmp(&dist_b).unwrap())
+                        // we care about the item's id on the server, not its distance from the player.
+                        .and_then(|(item_entity, _)| {
+                            server_to_local_ids.0.get_by_right(&item_entity.id())
+                        })
+                    {
+                        trace!("sending request for picking up item with id {}", id);
+                        sc.insert_comp(PickupRequest { id });
                     }
                 }
             }
@@ -461,29 +583,181 @@ mod controls {
     }
 }
 
+mod item {
+    use crate::prelude::*;
+    use comn::art::Appearance;
+    use comn::item::{Deposition, DropRequest, Inventory};
+
+    use std::sync::{Arc, Mutex};
+    use stdweb::web::{
+        document, html_element::ImageElement, IElement, INode, INonElementParentNode,
+    };
+
+    pub struct UpdateInventory {
+        item_drop_events: Arc<Mutex<Vec<u32>>>,
+    }
+    impl Default for UpdateInventory {
+        fn default() -> Self {
+            let item_drop_events = Arc::new(Mutex::new(Vec::new()));
+
+            {
+                let item_drop_events = item_drop_events.clone();
+                let drop_item = move |id: u64| {
+                    item_drop_events
+                        .lock()
+                        .expect("couldn't lock item drop events")
+                        .push(id as u32);
+                };
+                js! {
+                    let drop_item = @{drop_item};
+                    $("body").droppable({
+                        accept: ".item",
+                        drop: function(e, o) {
+                            //width: 400px;
+                            //height: 225px;
+                            if (
+                                (o.position.top < -30 || o.position.top > 225 + 30) ||
+                                (o.position.left < -30 || o.position.left > 400 + 30)
+                            ) {
+                                drop_item(Math.floor(o.draggable[0].id));
+                            }
+                        }
+                    });
+                }
+            }
+
+            Self { item_drop_events }
+        }
+    }
+    impl<'a> System<'a> for UpdateInventory {
+        type SystemData = (
+            Entities<'a>,
+            Read<'a, crate::net::ServerConnection>,
+            Read<'a, crate::net::ServerToLocalIds>,
+            WriteStorage<'a, Inventory>,
+            ReadStorage<'a, Appearance>,
+        );
+
+        fn run(
+            &mut self,
+            (ents, sc, server_to_local_ids, mut inventories, appearances): Self::SystemData,
+        ) {
+            if let Ok(mut item_drops) = self.item_drop_events.lock() {
+                for id in item_drops.drain(..) {
+                    sc.insert_comp(DropRequest { id });
+                }
+            }
+
+            for (ent, inventory) in (&*ents, inventories.drain()).join() {
+                let player_id = ent.id().to_string();
+                let inventory_div = match document().get_element_by_id(&player_id) {
+                    Some(div) => {
+                        // clear the items from last time.
+                        for _ in 0..div.child_nodes().len() {
+                            div.remove_child(&div.first_child().unwrap()).unwrap();
+                        }
+                        div
+                    }
+                    None => {
+                        let div = document().create_element("div").unwrap();
+
+                        div.class_list().add("box").unwrap();
+                        div.class_list().add("inventory").unwrap();
+                        div.set_attribute("id", &player_id).unwrap();
+
+                        document().body().unwrap().append_child(&div);
+
+                        js!($("#" + @{player_id}).draggable());
+                        div
+                    }
+                };
+
+                for item_server_id in inventory.items {
+                    let item_ent = ents.entity(
+                        *server_to_local_ids
+                            .0
+                            .get_by_left(&item_server_id)
+                            .expect("can't render item; invalid server id"),
+                    );
+                    let appearance = appearances
+                        .get(item_ent)
+                        .expect("inventory item has no appearance");
+
+                    // set image up to load
+                    let new_img = ImageElement::with_size(64, 64);
+                    new_img
+                        .set_attribute("id", &item_server_id.to_string())
+                        .unwrap();
+                    new_img.class_list().add("item").unwrap();
+                    new_img.set_src(&format!("./img/{:?}.png", appearance));
+
+                    inventory_div.append_child(&new_img);
+
+                    js! {
+                        $("#" + @{item_server_id}).draggable({
+                            revert: true
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// This system removes the Pos component from entities
+    /// with the comn::item::Deposition Component, making the entities
+    /// unable to exist physically, effectively turning them into items.
+    pub struct DepositionItems;
+    impl<'a> System<'a> for DepositionItems {
+        type SystemData = (
+            Entities<'a>,
+            WriteStorage<'a, Deposition>,
+            WriteStorage<'a, Pos>,
+        );
+
+        fn run(&mut self, (ents, mut deposes, mut poses): Self::SystemData) {
+            for (ent, _) in (&*ents, deposes.drain()).join() {
+                poses.remove(ent).expect("Couldn't deposition entity");
+            }
+        }
+    }
+}
+
 fn main() {
     stdweb::initialize();
-    // https://github.com/rustwasm/console_error_panic_hook/blob/master/src/lib.rs ?
+
+    #[cfg(feature = "stdweb-logger")]
+    stdweb_logger::init_with_level(Level::Trace);
 
     // instantiate an ECS world to hold all of the systems, resources, and components.
     let mut world = World::new();
 
-    world.insert(comn::Fps(70.0));
+    world.insert(comn::Fps(75.0));
 
     // add systems and instantiate and order the other systems.
     #[rustfmt::skip]
     let mut dispatcher = DispatcherBuilder::new()
+        // controls
         .with(comn::controls::MoveHeadings,         "heading",      &[])
-        .with(comn::phys::Collision,                "collision",    &[])
         .with(controls::MovementControl::default(), "move",         &[])
+        .with(controls::MouseControl::default(),    "click",        &[])
+        // phys
+        .with(comn::phys::Collision,                "collision",    &[])
+        .with(net::SyncPositions,                   "sync phys",    &[])
+        // art
         .with(renderer::Render::default(),          "render",       &[])
         .with(comn::art::UpdateAnimations,          "animate",      &[])
+        // util
         .with(net::HandleServerPackets::default(),  "packets",      &[])
-        .with(net::SyncPositions,                   "sync phys",    &[])
+        .with(comn::dead::ClearDead,                "clear dead",   &[])
+        // items
+        .with(item::DepositionItems,                "deposition",   &[])
+        .with(item::UpdateInventory::default(),     "update items", &[])
         .build();
 
     // go through all of the systems and register components and resources accordingly
     dispatcher.setup(&mut world);
+
+    info!("Starting game loop!");
 
     fn game_loop(mut dispatcher: specs::Dispatcher<'static, 'static>, mut world: specs::World) {
         // run all of the ECS systems

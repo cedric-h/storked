@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{collide, controls::Heading, Cuboid, Fps, Hitbox};
+use crate::{collide, controls::Heading, Hitbox};
 use specs::prelude::*;
 
 /// Currently, Collision serves to prevent people who are trying to go through things

@@ -6,6 +6,7 @@ use comn::{
 use log::*;
 use specs::WorldExt;
 mod net;
+mod pickup;
 
 fn main() {
     {
@@ -21,6 +22,7 @@ fn main() {
     world.insert(comn::Fps(20.0));
     #[rustfmt::skip]
     let mut dispatcher = DispatcherBuilder::new()
+        .with(pickup::ItemPickupDrop,       "pickup",           &[])
         .with(comn::art::UpdateAnimations,  "animate",          &[])
         .with(comn::phys::Collision,        "collision",        &[])
         .with(comn::controls::MoveHeadings, "heading",          &[])
@@ -39,32 +41,47 @@ fn main() {
     let mut rng = thread_rng();
     for x in 0..10 {
         for y in 0..10 {
-            use Appearance::*;
             let is_hole = x * y % 3 != 0;
-
-            let loc = Vec2::new(x as f32 * 2.0 + 5.0, y as f32 * 2.0 + 5.0);
+            let loc = Vec2::new(x as f32 * 2.0 + 2.0, y as f32 * 2.0 + 2.0);
 
             world
                 .create_entity()
                 .with(Tile)
-                .with(if is_hole {
-                    RockHole
-                } else if rand::random() {
-                    Rock
-                } else {
-                    SpottedRock
+                .with({
+                    use Appearance::*;
+
+                    if is_hole {
+                        RockHole
+                    } else if rand::random() {
+                        Rock
+                    } else {
+                        SpottedRock
+                    }
                 })
                 .with(Pos::vec(loc.clone()))
                 .build();
 
-            if is_hole && 4 == rng.gen_range(0, 10) {
-                world
-                    .create_entity()
-                    .with(Appearance::GleamyStalagmite)
-                    .with(Pos::vec(loc + Vec2::y() * 0.75))
-                    .with(Hitbox(Cuboid::new(Vec2::new(1.0, 0.5))))
-                    .with(Animate::new())
-                    .build();
+            match (is_hole, rng.gen_range(0, 10)) {
+                (true, 4) => {
+                    world
+                        .create_entity()
+                        .with(Appearance::GleamyStalagmite)
+                        .with(Pos::vec(loc + Vec2::y() * 0.75))
+                        .with(Hitbox(Cuboid::new(Vec2::new(0.8, 0.5))))
+                        .with(Animate::new())
+                        .build();
+                }
+                (false, 3) => {
+                    if rand::random() {
+                        world
+                            .create_entity()
+                            .with(Item)
+                            .with(Appearance::Key)
+                            .with(Pos::vec(loc + Vec2::y() * 0.75))
+                            .build();
+                    }
+                }
+                _ => {}
             }
         }
     }

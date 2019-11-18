@@ -10,7 +10,7 @@ pub use specs;
 pub mod prelude {
     pub use super::na;
     pub use super::specs;
-    pub use super::{Iso2, Pos, Vec2};
+    pub use super::{Dead, Iso2, Item, Pos, Vec2};
 }
 use prelude::*;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,9 @@ pub struct Hitbox(pub Cuboid<f32>);
 pub struct Fps(pub f32);
 
 pub mod art;
+
+pub mod item;
+pub use item::Item;
 
 pub mod dead;
 pub use dead::Dead;
@@ -135,21 +138,34 @@ pub mod net {
         use crate::art::{Animate, Appearance, PlayerAnimationController, Tile};
         use crate::controls::{Camera, Heading};
         use crate::dead::Dead;
-        use crate::Hitbox;
+        use crate::item::{Deposition, DropRequest, Inventory, PickupRequest};
+        use crate::{Hitbox, Item};
 
         net_component! {
+            // art
             Appearance,
             Tile,
             Animate,
             PlayerAnimationController,
+
+            // inventory
+            Item,
+            Deposition,
+            Inventory,
+            PickupRequest,
+            DropRequest,
+
+            // phys/net
             Pos,
             Hitbox,
-            Dead,
             UpdatePosition,
             SpawnPlayer,
             LocalPlayer,
             Heading,
             Camera,
+
+            // util
+            Dead,
         }
     }
 }

@@ -9,7 +9,7 @@ default-target = "wasm32-unknown-unknown"
 # This accepts either a string (as shown here), or an array of strings,
 # in which case it will prepend all of the specified files in their
 # order of appearance.
-prepend-js = ["src/three.min.js", "src/renderer.js"]
+prepend-js = ["src/renderer.js"]
 
 [cargo-web]
 # Asserts the minimum required version of `cargo-web` necessary
