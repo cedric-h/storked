@@ -28,6 +28,25 @@ pub struct PickupRequest {
 }
 
 #[derive(Clone, Debug, Default, Component, Serialize, Deserialize)]
+/// Note that unlike PickupRequest, DropRequest refers to an item based on the given
+/// item's location in the player's inventory, not that item's index in the ECS.
+///
+/// There are a couple of reasons for this. First of all, this acts as a security measure;
+/// if raw ids were accepted here, players could potentially drop items that are actually
+/// in other people's inventories.
+///
+/// Such a vulnerability could be avoided with a couple of preemptive checks,
+/// but in this case, a DropRequest is actually also the more performant option,
+/// since Inventories are indexed into by SlotIndexes.
+///
+/// Furthermore, being able to drop an item based on a SlotIndex is easier to accomodate on
+/// the client, where the GUI widgets are already arranged based on the data in their SlotIndexes.
+///
+/// This does have a couple of drawbacks, however: there are certain situations where it would
+/// actually be beneficial for the player to be able to drop an item from an inventory that isn't
+/// their own, as the case may be with, for example, chests that they have open.
+///
+/// That bridge will be crossed when it is come to.
 pub struct DropRequest {
     /// The SlotIndex of the item the player would like to throw on the ground.
     pub item_index: SlotIndex,
@@ -126,7 +145,13 @@ impl Inventory {
             Some(existing) => Ok(existing),
             // if it didn't, that means the slot at this index was never made and
             // that's terrifying.
-            None => Err(Error::InvalidSlotIndex),
+            None => {
+                // remove the item that was just inserted,
+                // this inventory wasn't supposed to have a slot like that.
+                self.items.remove(index.clone());
+
+                Err(Error::InvalidSlotIndex)
+            },
         }
     }
 
