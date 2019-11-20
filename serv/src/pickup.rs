@@ -27,14 +27,43 @@ impl<'a> System<'a> for ItemPickupDrop {
         (&*ents, &poses, drops.drain())
             .join()
             .map(
-                |(player_ent, player_pos, DropRequest { id })| -> (Entity, Pos, Entity) {
-                    (player_ent, player_pos.clone(), ents.entity(id))
+                |(player_ent, player_pos, DropRequest { item_index })| -> (Entity, Pos, _) {
+                    (player_ent, player_pos.clone(), item_index)
                 },
             )
             .collect::<Vec<_>>()
             .into_iter()
-            .for_each(|(player_ent, player_pos, item_ent)| {
+            .for_each(|(player_ent, player_pos, item_inventory_index)| {
                 info!("re-physicalizing an item!");
+
+                // taking the item out of their inventory
+                let player_inventory = invs.get_mut(player_ent).expect(
+                    "Couldn't get inventory for player to drop item",
+                );
+                let item_ent = ents.entity(match player_inventory.clear(&item_inventory_index) {
+                    Ok(slot) => match slot {
+                        Some(ent) => ent,
+                        None => {
+                            // POSSIBLE HACKING
+                            error!(
+                                "Player[{}] attempted to drop item at invalid index: {:?}",
+                                player_ent.id(),
+                                item_inventory_index,
+                            );
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        // POSSIBLE HACKING
+                        error!(
+                            "Error fetching item in order to drop it. Player[{}], item index {:?}: {:?}",
+                            player_ent.id(),
+                            item_inventory_index,
+                            e
+                        );
+                        return;
+                    }
+                });
 
                 // re-physicalizing the item
                 for &Client(addr) in clients.join() {
@@ -44,21 +73,9 @@ impl<'a> System<'a> for ItemPickupDrop {
                     .insert(item_ent, player_pos)
                     .expect("Couldn't insert position to re-physicalize an item");
 
-                // taking the item out of their inventory
-                let player_inventory = invs.get_mut(player_ent).expect(
-                    "couldn't get address for player to refresh their inventory after drop",
-                );
-                player_inventory.items.remove(
-                    player_inventory
-                        .items
-                        .iter()
-                        .position(|&x| x == item_ent.id())
-                        .expect("Could find item in owner's inventory"),
-                );
-
                 // updating the client's record of their player's inventory
                 let &Client(player_addr) = clients.get(player_ent).expect(
-                    "couldn't get address for player to refresh their inventory after drop",
+                    "Couldn't get address for player to refresh their inventory after drop",
                 );
                 cm.insert_comp(player_addr, player_ent, player_inventory.clone());
             });
@@ -77,6 +94,7 @@ impl<'a> System<'a> for ItemPickupDrop {
                     }),
                     &Client(player_addr),
                 )| {
+                    info!("got request");
                     let item_ent = ents.entity(id);
                     // get the pos of the item they want to pickup
                     // the question marks will prevent them from picking this up
@@ -85,16 +103,40 @@ impl<'a> System<'a> for ItemPickupDrop {
                         translation: i_trans,
                         ..
                     }) = poses.get(item_ent)?;
-                    items.get(item_ent)?;
+                    let item_item = items.get(item_ent)?;
+                    info!("passed requirements");
 
                     let player_to_item_distance_squared =
                         (p_trans.vector - i_trans.vector).magnitude_squared();
 
                     // actually close enough!
                     if player_to_item_distance_squared < MAX_INTERACTION_DISTANCE_SQUARED {
-                        player_inventory.items.push(item_ent.id());
-                        cm.insert_comp(player_addr, player_ent, player_inventory.clone());
-                        Some(item_ent)
+                        use comn::item::Error;
+                        match player_inventory.insert(item_ent.id(), item_item) {
+                            Err(e) => match e {
+                                Error::InventoryFull => None,
+                                other_e => {
+                                    // The Inventory API massively fucked up
+                                    error!(
+                                        "Couldn't insert Item[{}] into Player[{}]'s inventory: {:?}",
+                                        item_ent.id(),
+                                        player_ent.id(),
+                                        other_e,
+                                    );
+                                    None
+                                }
+                            }
+                            index => {
+                                info!(
+                                    "Inserting Item[{}] into Player[{}]'s inventory at index: {:?}!",
+                                    item_ent.id(),
+                                    player_ent.id(),
+                                    index,
+                                );
+                                cm.insert_comp(player_addr, player_ent, player_inventory.clone());
+                                Some(item_ent)
+                            },
+                        }
                     } else {
                         // tryna hack!?
                         None

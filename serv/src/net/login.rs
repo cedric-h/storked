@@ -98,7 +98,7 @@ impl<'a> System<'a> for SpawnNewPlayers {
             lu.insert(ent, animate.clone());
             lu.insert(ent, hitbox.clone());
             lu.insert(ent, art::PlayerAnimationController);
-            lu.insert(ent, item::Inventory::default());
+            lu.insert(ent, item::Inventory::character());
 
             // tell everyone 'bout the new kid on the block
             for Client(addr) in (&clients).join() {

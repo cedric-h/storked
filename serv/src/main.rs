@@ -75,7 +75,7 @@ fn main() {
                     if rand::random() {
                         world
                             .create_entity()
-                            .with(Item)
+                            .with(Item::Misc)
                             .with(Appearance::Key)
                             .with(Pos::vec(loc + Vec2::y() * 0.75))
                             .build();
