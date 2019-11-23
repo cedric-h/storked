@@ -148,7 +148,7 @@ impl Inventory {
             None => {
                 // remove the item that was just inserted,
                 // this inventory wasn't supposed to have a slot like that.
-                self.items.remove(index.clone());
+                self.items.remove(&index);
 
                 Err(Error::InvalidSlotIndex)
             },
@@ -212,6 +212,53 @@ impl Inventory {
         // (which will return an error if it can't find anything)
         self.insert_loose(ent)
     }
+}
+
+#[test]
+fn inventory_integration() {
+    let mut inv = Inventory::new_loose(2, 4);
+    inv.items.insert(SlotIndex::Reserved(Item::Weapon), None);
+
+    // make sure special items get prioritized to the right slots
+    inv.insert(0, &Item::Weapon).unwrap();
+    assert!(inv.slot(&SlotIndex::Reserved(Item::Weapon)).unwrap() == &Some(0));
+    assert!(inv.reserved().next() == Some((&SlotIndex::Reserved(Item::Weapon), &Some(0))));
+    assert!(inv.clear(&SlotIndex::Reserved(Item::Weapon)).unwrap() == Some(0));
+
+    // make sure loose slots work
+    while let Ok(_) = inv.insert(0, &Item::Misc) {}
+
+    let loose = inv.loose().map(|(i, e)| (i.clone(), e.clone())).collect::<Vec<_>>();
+
+    use SlotIndex::Loose;
+    vec![
+        Loose(0, 0),
+        Loose(0, 1),
+        Loose(0, 2),
+        Loose(0, 3),
+        Loose(1, 0),
+        Loose(1, 1),
+        Loose(1, 2),
+        Loose(1, 3),
+    ]
+    .into_iter()
+    .map(|i| (i, Some(0_u32)))
+    .for_each(|s| {
+        assert!(
+            loose.contains(&s),
+            "Test inventory should contain {:?} but it doesn't.",
+            s,
+        );
+        // clear it, which we can use as a marker to see if we've visited each slot
+        assert!(Some(0) == inv.clear(&s.0).unwrap());
+    });
+
+    // make sure that each slot is empty (that we cleared it)
+    inv.loose().for_each(|(i, e)| assert!(
+        e.is_none(),
+        "There's an extra slot at {:?} that shouldn't be there.",
+        i,
+    ));
 }
 
 /// A SlotIndex refers to a particular place in an Inventory.
